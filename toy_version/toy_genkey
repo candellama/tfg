@@ -67,8 +67,8 @@ class MLDSA:
 
     
 
-    # principal function to generate the keypair as bytes
-    def generate_keypair(self, seed: bytes = None) -> Tuple[bytes, bytes]:
+    # principal function to generate the keypair 
+    def generate_keypair(self, seed: bytes = None) -> Tuple[Tuple, Tuple]:
 
         if seed is None:
             seed = self.generate_seed()
@@ -101,11 +101,9 @@ class MLDSA:
         # Compute t = A * s1 + s2 (simplified matrix multiplication)
         t = self._matrix_mult_add(A, s1, s2)
         
-        # Encode public key
-        public_key = self._encode_public_key(rho, t)
-        
-        # Encode private key
-        private_key = self._encode_private_key(rho, s1, s2, t)
+        # Return raw components without encoding
+        public_key = (rho, t)
+        private_key = (rho, s1, s2, t)
         
         return public_key, private_key
     
@@ -165,27 +163,6 @@ class MLDSA:
             t.append(acc)
         return t
 
-    
-    def _encode_public_key(self, rho: bytes, t: list) -> bytes:
-        """Encode public key (rho, t)"""
-        # concatenate rho and serialized t
-        encoded = rho
-        for poly in t:
-            encoded += bytes(p % 256 for p in poly[:32])  # truncated for demo
-        return encoded
-    
-    def _encode_private_key(self, rho: bytes, s1: list, s2: list, t: list) -> bytes:
-        """Encode private key (rho, s1, s2, t)"""
-        #concatenate all components
-        encoded = rho
-        for poly in s1:
-            encoded += bytes(p % 256 for p in poly[:16])
-        for poly in s2:
-            encoded += bytes(p % 256 for p in poly[:16])
-        for poly in t:
-            encoded += bytes(p % 256 for p in poly[:16])
-        return encoded
-
 
 #usage
 if __name__ == "__main__":
@@ -195,6 +172,11 @@ if __name__ == "__main__":
     # Generate keypair
     public_key, private_key = ml_dsa.generate_keypair()
     
-    print(f"Public Key (hex): {public_key.hex()[:64]}...")
-    print(f"Public Key Size: {len(public_key)} bytes")
-    print(f"Private Key Size: {len(private_key)} bytes")
+    # public_key is a tuple: (rho, t)
+    # private_key is a tuple: (rho, s1, s2, t)
+    
+    rho_pub, t = public_key
+    rho_priv, s1, s2, t_priv = private_key
+    
+    print(f"Public Key rho (hex): {rho_pub.hex()}")
+    print(f"Public Key t (first poly coeffs): {[t[0][:8]]}...")
