@@ -1,0 +1,200 @@
+import hashlib
+import os
+from typing import Tuple
+
+# Key Generation code for toy version of Dilithium signature scheme (ML-DSA)
+
+class MLDSA:
+    
+    # function to initialize parameters based on security level
+    def __init__(self, security_level: int = 2):
+        self.security_level = security_level
+        self.set_parameters()
+    
+    # function to set parameters based on security level
+    def set_parameters(self):
+        params = {
+            2: {"k": 4, "l": 4, "d": 13, "eta": 2},
+            3: {"k": 6, "l": 5, "d": 13, "eta": 4},
+            5: {"k": 8, "l": 7, "d": 13, "eta": 2}
+        }
+        
+        p = params.get(self.security_level, params[2])
+        self.k = p["k"]  # number of rows in A matrix
+        self.l = p["l"]  # number of columns in A matrix
+        self.d = p["d"]  # number of dropped bits
+        self.eta = p["eta"]  # eta parameter for key sampling
+        self.n = 16 # real is 256 ring dimension
+        self.q =  257 #8380417 modulus for coefficients
+    
+
+    # function to generate random seed for key generation
+    # default seed size is 32 bytes / 256 bits
+    def generate_seed(self) -> bytes:
+        return os.urandom(32)
+    
+    # function to expand seed using SHAKE256 XOF into a pseudorandom byte stream of some length
+    def expand_seed(self, seed: bytes, nonce: int, length: int) -> bytes:
+        h = hashlib.shake_256()
+        h.update(seed)
+        h.update(nonce.to_bytes(2, "little"))  # robust (0..65535)
+        return h.digest(length)
+    
+
+    # function to obtain uniform matrix A k x l from seed rho
+    def sample_uniform_matrix(self, rho: bytes) -> list:
+        A = []
+        for i in range(self.k):
+            row = []
+            for j in range(self.l):
+                nonce = i * self.l + j
+                # sample polynomial coefficients
+                # chain of bytes representing the polynomial
+                poly_bytes = self.expand_seed(rho, nonce, 4 * self.n)
+                # Convert the bytes to polynomial coefficients mod q
+                poly = self._bytes_to_coefficients_uniform_mod_q(poly_bytes)
+                row.append(poly)
+            A.append(row)
+        return A
+    
+    # function to sample secret small polynomials s1 and s2, coefficients in [-eta, eta]
+    def sample_bounded(self, sigma: bytes, nonce: int, eta: int, n: int) -> list:
+        poly_bytes = self.expand_seed(sigma, nonce, n)
+        coeffs = []
+        for b in poly_bytes:
+            coeffs.append((b % (2 * eta + 1)) - eta)
+        return coeffs
+
+    
+
+    # principal function to generate the keypair as bytes
+    def generate_keypair(self, seed: bytes = None) -> Tuple[bytes, bytes]:
+
+        if seed is None:
+            seed = self.generate_seed()
+        
+        # Seed expansion
+        h = hashlib.shake_256()
+        h.update(b"KeyGen" + seed)
+        expanded = h.digest(128)
+        
+        rho = expanded[:32]  # seed for A
+        sigma = expanded[32:64]  # seed for s1 and s2
+        
+        # Sample matrix A
+        A = self.sample_uniform_matrix(rho)
+        
+        # Sample secretes s1 and s2
+        s1 = []
+        s2 = []
+        
+        for i in range(self.l):
+            nonce = i
+            s1_poly = self.sample_bounded(sigma, nonce, self.eta, self.n)
+            s1.append(s1_poly)
+        
+        for i in range(self.k):
+            nonce = self.l + i
+            s2_poly = self.sample_bounded(sigma, nonce, self.eta, self.n)
+            s2.append(s2_poly)
+        
+        # Compute t = A * s1 + s2 (simplified matrix multiplication)
+        t = self._matrix_mult_add(A, s1, s2)
+        
+        # Encode public key
+        public_key = self._encode_public_key(rho, t)
+        
+        # Encode private key
+        private_key = self._encode_private_key(rho, s1, s2, t)
+        
+        return public_key, private_key
+    
+
+    def _bytes_to_coefficients_uniform_mod_q(self, data: bytes) -> list:
+        coeffs = []
+        needed = 4 * self.n
+        if len(data) < needed:
+            raise ValueError(f"Need at least {needed} bytes, got {len(data)}")
+
+        for i in range(self.n):
+            chunk = data[4*i : 4*i + 4]
+            val = int.from_bytes(chunk, "little") % self.q
+            coeffs.append(val)
+        return coeffs
+
+
+    def _poly_add(self, a: list, b: list) -> list:
+        return [(x + y) % self.q for x, y in zip(a, b)]
+
+
+    # function to multiply two polynomials in R_q = Z_q[x]/(x^n + 1)
+    def _poly_mul_negacyclic(self, a: list, b: list) -> list:
+        """
+        Multiply in R_q = Z_q[x]/(x^n + 1) (negacyclic convolution).
+        """
+        n = self.n
+        q = self.q
+        res = [0] * n
+        for i in range(n):
+            for j in range(n):
+                prod = a[i] * b[j]
+                idx = i + j
+                # If idx >= n, wrap around and subtract because x^n == -1.
+                if idx < n:
+                    res[idx] = (res[idx] + prod) % q
+                else:
+                    res[idx - n] = (res[idx - n] - prod) % q
+        return res
+
+
+    
+    def _matrix_mult_add(self, A: list, s1: list, s2: list) -> list:
+        """
+        Compute t = A*s1 + s2 over the ring R_q (polynomial arithmetic).
+        A: k x l matrix of polynomials (each polinomial is length-n list mod q)
+        s1: length-l vector of polynomials
+        s2: length-k vector of polynomials (small coefficients)
+        """
+        t = []
+        for i in range(self.k):
+            acc = [0] * self.n
+            for j in range(self.l):
+                acc = self._poly_add(acc, self._poly_mul_negacyclic(A[i][j], s1[j]))
+            # add s2 (convert negatives to mod q if needed)
+            acc = [(acc[k] + (s2[i][k] % self.q)) % self.q for k in range(self.n)]
+            t.append(acc)
+        return t
+
+    
+    def _encode_public_key(self, rho: bytes, t: list) -> bytes:
+        """Encode public key (rho, t)"""
+        # concatenate rho and serialized t
+        encoded = rho
+        for poly in t:
+            encoded += bytes(p % 256 for p in poly[:32])  # truncated for demo
+        return encoded
+    
+    def _encode_private_key(self, rho: bytes, s1: list, s2: list, t: list) -> bytes:
+        """Encode private key (rho, s1, s2, t)"""
+        #concatenate all components
+        encoded = rho
+        for poly in s1:
+            encoded += bytes(p % 256 for p in poly[:16])
+        for poly in s2:
+            encoded += bytes(p % 256 for p in poly[:16])
+        for poly in t:
+            encoded += bytes(p % 256 for p in poly[:16])
+        return encoded
+
+
+#usage
+if __name__ == "__main__":
+    # ML-DSA instance with security level 2
+    ml_dsa = MLDSA(security_level=2)
+    
+    # Generate keypair
+    public_key, private_key = ml_dsa.generate_keypair()
+    
+    print(f"Public Key (hex): {public_key.hex()[:64]}...")
+    print(f"Public Key Size: {len(public_key)} bytes")
+    print(f"Private Key Size: {len(private_key)} bytes")
