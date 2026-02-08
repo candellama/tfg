@@ -10,36 +10,32 @@ from toy_key_gen import MLDSA
 #   z = y + c*s1
 #   reject if norms are too large (toy rejection sampling)
 
-def _serialize_poly_vec(vec: List[List[int]], q: int) -> bytes:
-    # Deterministic serialization: 2 bytes per coefficient (works for q <= 65535).
-    out = bytearray()
-    for poly in vec:
-        for c in poly:
-            out += int(c % q).to_bytes(2, "little")
-    return bytes(out)
-
-
 ########### highbits and lowbits functions
 
 # function to compute high and lowbits of a polynomial expressed as list of its coeffs
-def _highbits_poly(poly: List[int], gamma2: int, q: int) -> Tuple[List[int], List[int]]:
-    # low  = coeff mod gamma2
-    low = [c % gamma2 for c in poly]
-    # high = (coeff - low)/gamma2
-    high = [((c - low_i) // gamma2) for c, low_i in zip(poly, low)]
-    return high, low
+def _highbits_poly(mldsa: MLDSA, poly: List[int], gamma2: int) -> Tuple[List[int], List[int]]:
+    highs, lows = [], []
+    for c in poly:
+        cc = mldsa._center(c,mldsa.q)
+        # low  = coeff mod gamma2
+        low = mldsa._centered_mod(cc, gamma2)       # symmetric remainder
+        # high = (coeff - low)/gamma2
+        high = (cc - low) // gamma2           # integer exact
+        highs.append(high)
+        lows.append(low)
+    return highs, lows
 
 # function to compute the high and lowbits of a vector of polys
-def _highbits_vec(vec: List[List[int]], gamma2: int, q: int) -> Tuple[List[List[int]], List[List[int]]]:
+def _highbits_vec(mldsa: MLDSA, vec: List[List[int]], gamma2: int) -> Tuple[List[List[int]], List[List[int]]]:
     highs, lows = [], []
     for p in vec:
-        h, l = _highbits_poly(p, gamma2, q)
+        h, l = _highbits_poly(mldsa, p, gamma2)
         highs.append(h)
         lows.append(l)
     return highs, lows
 
-def _lowbits_vec(vec: List[List[int]], gamma2: int, q: int) -> List[List[int]]:
-    return [_highbits_poly(p, gamma2, q)[1] for p in vec]
+def _lowbits_vec(mldsa: MLDSA, vec: List[List[int]], gamma2: int) -> List[List[int]]:
+    return [_highbits_poly(mldsa, p, gamma2)[1] for p in vec]
 
 
 
@@ -60,7 +56,7 @@ def _hash_to_bit(message: bytes, w1: List[List[int]]) -> int:
 def _poly_scalar_add(mod: int, poly1: List[int], scalar: int, poly2: List[int]) -> List[int]:
     if scalar == 0:
         return [c1 % mod for c1 in poly1]
-    return [(c1 + c2) % mod for c1, c2 in zip(poly1, poly2)]
+    return [(c1 + scalar*c2) % mod for c1, c2 in zip(poly1, poly2)]
 
 # the same operation expanded to vectors of polys
 # vec1+scalar*vec2
@@ -94,7 +90,7 @@ def sign(mldsa: MLDSA, message: bytes, private_key: tuple, max_tries: int = 1000
         w = _mat_vec_mul(mldsa, A, y)
 
         # 3) w1 = HighBits(w, gamma2)
-        w1, _w0 = _highbits_vec(w, mldsa.gamma2, mldsa.q)
+        w1, _w0 = _highbits_vec(mldsa, w, mldsa.gamma2)
 
         # 4) c = H(m || w1)  (toy: c in {0,1})
         c = _hash_to_bit(message, w1)
@@ -112,7 +108,7 @@ def sign(mldsa: MLDSA, message: bytes, private_key: tuple, max_tries: int = 1000
         else:
             # subtract s2 from each component (mod q)
             w_minus = [mldsa._poly_sub(w[i], [c_ % mldsa.q for c_ in s2[i]]) for i in range(mldsa.k)]
-        w0_prime = _lowbits_vec(w_minus, mldsa.gamma2, mldsa.q)
+        w0_prime = _lowbits_vec(mldsa, w_minus, mldsa.gamma2)
 
         # ||w0'||_inf <= gamma2 - beta
         if max(max(abs(x) for x in poly) for poly in w0_prime) > (mldsa.gamma2 - mldsa.beta):
@@ -140,7 +136,7 @@ def verify(mldsa: MLDSA, message: bytes, signature: Tuple[int, List[List[int]]],
     else:
         Az_minus_ct = [mldsa._poly_sub(Az[i], t[i]) for i in range(mldsa.k)]
 
-    w1_prime, _ = _highbits_vec(Az_minus_ct, mldsa.gamma2, mldsa.q)
+    w1_prime, _ = _highbits_vec(mldsa, Az_minus_ct, mldsa.gamma2)
     c_prime = _hash_to_bit(message, w1_prime)
 
     return c_prime == c
