@@ -129,6 +129,9 @@ class MLDSA:
     def _poly_add(self, a: list, b: list) -> list:
         return [(x + y) % self.q for x, y in zip(a, b)]
 
+    def _poly_sub(self, a: list, b: list) -> list:
+        return [(x - y) % self.q for x, y in zip(a, b)]
+
 
     # function to multiply two polynomials in R_q = Z_q[x]/(x^n + 1)
     def _poly_mul_negacyclic(self, a: list, b: list) -> list:
@@ -169,16 +172,21 @@ class MLDSA:
         return t
 
     # --- Helpers for norms (used by signing) ---
-
-    def _center(self, x: int) -> int:
-        """Map x in [0,q) to centered representative in (-q/2, q/2]."""
-        if x > self.q // 2:
-            return x - self.q
+    @staticmethod
+    def _center(x: int, q: int) -> int:
+        x %= q
+        if x > q // 2:
+            return x - q
         return x
+        
+    @staticmethod
+    def _centered_mod(x: int, m: int) -> int:
+        r = x % m
+        return r - m if r > m // 2 else r
 
     def _poly_norm_inf(self, a: List[int]) -> int:
-        return max(abs(self._center(x % self.q)) for x in a)
-
+        return max(abs(MLDSA._center(x, self.q)) for x in a)
+        
     def _vec_norm_inf(self, v: List[List[int]]) -> int:
         return max(self._poly_norm_inf(p) for p in v)
 
