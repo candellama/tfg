@@ -1,6 +1,6 @@
 import hashlib
 import os
-from typing import Tuple
+from typing import Tuple, List
 
 # Key Generation code for toy version of Dilithium signature scheme (ML-DSA)
 
@@ -14,9 +14,9 @@ class MLDSA:
     # function to set parameters based on security level
     def set_parameters(self):
         params = {
-            2: {"k": 4, "l": 4, "d": 13, "eta": 2},
-            3: {"k": 6, "l": 5, "d": 13, "eta": 4},
-            5: {"k": 8, "l": 7, "d": 13, "eta": 2}
+            2: {"k": 4, "l": 4, "d": 13, "eta": 2, "gamma1": 16, "gamma2": 8, "beta": 1},
+            3: {"k": 6, "l": 5, "d": 13, "eta": 4, "gamma1": 16, "gamma2": 8, "beta": 1},
+            5: {"k": 8, "l": 7, "d": 13, "eta": 2, "gamma1": 16, "gamma2": 8, "beta": 1}
         }
         
         p = params.get(self.security_level, params[2])
@@ -27,6 +27,11 @@ class MLDSA:
         self.n = 16 # real is 256 ring dimension
         self.q =  257 #8380417 modulus for coefficients
     
+         # Toy signing bounds (used by sign/verify in toy_sign_gen.py)
+        self.gamma1 = p["gamma1"]
+        self.gamma2 = p["gamma2"]
+        self.beta = p["beta"]
+
 
     # function to generate random seed for key generation
     # default seed size is 32 bytes / 256 bits
@@ -163,7 +168,21 @@ class MLDSA:
             t.append(acc)
         return t
 
+    # --- Helpers for norms (used by signing) ---
 
+    def _center(self, x: int) -> int:
+        """Map x in [0,q) to centered representative in (-q/2, q/2]."""
+        if x > self.q // 2:
+            return x - self.q
+        return x
+
+    def _poly_norm_inf(self, a: List[int]) -> int:
+        return max(abs(self._center(x % self.q)) for x in a)
+
+    def _vec_norm_inf(self, v: List[List[int]]) -> int:
+        return max(self._poly_norm_inf(p) for p in v)
+
+        
 #usage
 if __name__ == "__main__":
     # ML-DSA instance with security level 2
