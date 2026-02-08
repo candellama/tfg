@@ -1,0 +1,37 @@
+import hashlib
+import os
+import random
+from typing import Tuple
+from toy_key_gen import MLDSA
+
+def compute_signature(self, message:bytes, A: list, y: list, public_key: tuple, private_key: tuple) -> tuple:
+    rho, t = public_key
+    A=sample_uniform_matrix(rho)
+    y = [random.randint(-eta, eta) for _ in range(l)]
+    w = []
+    for i in range(self.k):
+        acc = [0] * self.n
+        for j in range(self.l):
+            acc = self._poly_add(acc, self._poly_mul_negacyclic(A[i][j], y[j]))
+        w.append(acc)
+
+    # Hash w and message to get challenge c
+    w_bytes = b''.join([bytes(poly) for poly in w])  # Convert polynomials to bytes
+    c = hashlib.sha256(message + w_bytes).digest()
+
+    rho, s1, s2, t = private_key
+    z = y + c*s1
+
+    return c,z
+
+if __name__ == "__main__":
+    # ML-DSA instance with security level 2
+    ml_dsa = MLDSA(security_level=2)
+    
+    # Generate keypair
+    public_key, private_key = ml_dsa.generate_keypair()
+    print(public_key)
+
+    c, z = ml_dsa.compute_signature(b"Hello, world!", public_key, private_key)
+    print(f"Signature c (hex): {c.hex()}")
+    print(f"Signature z (first 10 coefficients of first poly): {z[0][:10]}...")
