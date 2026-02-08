@@ -1,37 +1,157 @@
 import hashlib
 import os
-import random
-from typing import Tuple
+from typing import List, Tuple
 from toy_key_gen import MLDSA
 
-def compute_signature(self, message:bytes, A: list, y: list, public_key: tuple, private_key: tuple) -> tuple:
+# Toy signing steps
+#   w = A*y
+#   w1 = HighBits(w, gamma2)
+#   c = H(m || w1)   (toy: c is a single bit 0/1)
+#   z = y + c*s1
+#   reject if norms are too large (toy rejection sampling)
+
+def _serialize_poly_vec(vec: List[List[int]], q: int) -> bytes:
+    # Deterministic serialization: 2 bytes per coefficient (works for q <= 65535).
+    out = bytearray()
+    for poly in vec:
+        for c in poly:
+            out += int(c % q).to_bytes(2, "little")
+    return bytes(out)
+
+
+########### highbits and lowbits functions
+
+# function to compute high and lowbits of a polynomial expressed as list of its coeffs
+def _highbits_poly(poly: List[int], gamma2: int, q: int) -> Tuple[List[int], List[int]]:
+    # low  = coeff mod gamma2
+    low = [c % gamma2 for c in poly]
+    # high = (coeff - low)/gamma2
+    high = [((c - low_i) // gamma2) for c, low_i in zip(poly, low)]
+    return high, low
+
+# function to compute the high and lowbits of a vector of polys
+def _highbits_vec(vec: List[List[int]], gamma2: int, q: int) -> Tuple[List[List[int]], List[List[int]]]:
+    highs, lows = [], []
+    for p in vec:
+        h, l = _highbits_poly(p, gamma2, q)
+        highs.append(h)
+        lows.append(l)
+    return highs, lows
+
+def _lowbits_vec(vec: List[List[int]], gamma2: int, q: int) -> List[List[int]]:
+    return [_highbits_poly(p, gamma2, q)[1] for p in vec]
+
+
+
+########################3
+# this function returns either 0 or 1 so it is in the B_tau although -1 is not used for simplicity in the toy
+def _hash_to_bit(message: bytes, w1: List[List[int]]) -> int:
+    # Toy challenge: 1 bit from SHA-256.
+    h = hashlib.sha256()
+    h.update(message)   # this is H(M)
+    # Serialize w1 as signed-ish small ints, we mod to 16-bit for stable bytes
+    for poly in w1:
+        for v in poly:
+            h.update(int(v & 0xFFFF).to_bytes(2, "little")) # little endian
+    return h.digest()[0] & 1  
+
+#####   functions for algebraic ops
+# function to do: poly1 + scalar*poly2 of two polys expressed as lists of their polynomials
+def _poly_scalar_add(mod: int, poly1: List[int], scalar: int, poly2: List[int]) -> List[int]:
+    if scalar == 0:
+        return [c1 % mod for c1 in poly1]
+    return [(c1 + c2) % mod for c1, c2 in zip(poly1, poly2)]
+
+# the same operation expanded to vectors of polys
+# vec1+scalar*vec2
+def _vec_scalar_add(mod: int, vec1: List[List[int]], scalar: int, vec2: List[List[int]]) -> List[List[int]]:
+    return [_poly_scalar_add(mod, v, scalar, a) for v, a in zip(vec1, vec2)]
+
+# function to do matrix*vec of polynomials
+def _mat_vec_mul(mldsa: MLDSA, A: List[List[List[int]]], v: List[List[int]]) -> List[List[int]]:
+    # Returns k polynomials.
+    out = []
+    for i in range(mldsa.k):
+        acc = [0] * mldsa.n  # vector of n 0s
+        for j in range(mldsa.l):
+            acc = mldsa._poly_add(acc, mldsa._poly_mul_negacyclic(A[i][j], v[j]))
+        out.append(acc)
+    return out
+
+
+
+##############################33
+# signature generation
+def sign(mldsa: MLDSA, message: bytes, private_key: tuple, max_tries: int = 1000) -> Tuple[int, List[List[int]]]:
+    rho, s1, s2, _t = private_key
+    A = mldsa.sample_uniform_matrix(rho)
+
+    for _ in range(max_tries):
+        # 1) sample y with small coefficients in [-gamma1, gamma1]
+        y = [mldsa.sample_bounded(os.urandom(32), i, mldsa.gamma1, mldsa.n) for i in range(mldsa.l)]
+
+        # 2) w = A*y
+        w = _mat_vec_mul(mldsa, A, y)
+
+        # 3) w1 = HighBits(w, gamma2)
+        w1, _w0 = _highbits_vec(w, mldsa.gamma2, mldsa.q)
+
+        # 4) c = H(m || w1)  (toy: c in {0,1})
+        c = _hash_to_bit(message, w1)
+
+        # 5) z = y + c*s1
+        z = _vec_scalar_add(mldsa.q, y, c, s1)
+
+        # 6) rejection sampling 
+        if mldsa._vec_norm_inf(z) > (mldsa.gamma1 - mldsa.beta):
+            continue
+
+        # w0' = LowBits(w - c*s2, gamma2)
+        if c == 0:
+            w_minus = w
+        else:
+            # subtract s2 from each component (mod q)
+            w_minus = [mldsa._poly_sub(w[i], [c_ % mldsa.q for c_ in s2[i]]) for i in range(mldsa.k)]
+        w0_prime = _lowbits_vec(w_minus, mldsa.gamma2, mldsa.q)
+
+        # ||w0'||_inf <= gamma2 - beta
+        if max(max(abs(x) for x in poly) for poly in w0_prime) > (mldsa.gamma2 - mldsa.beta):
+            continue
+
+        return c, z
+
+    raise RuntimeError(f"Signing failed after {max_tries} attempts (try increasing gamma1/gamma2 or lowering beta).")
+
+def verify(mldsa: MLDSA, message: bytes, signature: Tuple[int, List[List[int]]], public_key: tuple) -> bool:
+    c, z = signature
     rho, t = public_key
-    A=sample_uniform_matrix(rho)
-    y = [random.randint(-eta, eta) for _ in range(l)]
-    w = []
-    for i in range(self.k):
-        acc = [0] * self.n
-        for j in range(self.l):
-            acc = self._poly_add(acc, self._poly_mul_negacyclic(A[i][j], y[j]))
-        w.append(acc)
+    A = mldsa.sample_uniform_matrix(rho)
 
-    # Hash w and message to get challenge c
-    w_bytes = b''.join([bytes(poly) for poly in w])  # Convert polynomials to bytes
-    c = hashlib.sha256(message + w_bytes).digest()
+    if c not in (0, 1):
+        return False
 
-    rho, s1, s2, t = private_key
-    z = y + c*s1
+    if mldsa._vec_norm_inf(z) > (mldsa.gamma1 - mldsa.beta):
+        return False
 
-    return c,z
+    # w1' = HighBits(Az - c t)
+    Az = _mat_vec_mul(mldsa, A, z)
+    if c == 0:
+        Az_minus_ct = Az
+    else:
+        Az_minus_ct = [mldsa._poly_sub(Az[i], t[i]) for i in range(mldsa.k)]
+
+    w1_prime, _ = _highbits_vec(Az_minus_ct, mldsa.gamma2, mldsa.q)
+    c_prime = _hash_to_bit(message, w1_prime)
+
+    return c_prime == c
 
 if __name__ == "__main__":
-    # ML-DSA instance with security level 2
-    ml_dsa = MLDSA(security_level=2)
-    
-    # Generate keypair
-    public_key, private_key = ml_dsa.generate_keypair()
-    print(public_key)
+    m = MLDSA(security_level=2)
+    pk, sk = m.generate_keypair()
 
-    c, z = ml_dsa.compute_signature(b"Hello, world!", public_key, private_key)
-    print(f"Signature c (hex): {c.hex()}")
-    print(f"Signature z (first 10 coefficients of first poly): {z[0][:10]}...")
+    msg = b"Hello, world!"
+    sig = sign(m, msg, sk)
+
+    print("Signature c:", sig[0])
+    print("Signature z[0][:8]:", sig[1][0][:8])
+    print("Verify:", verify(m, msg, sig, pk))
