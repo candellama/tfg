@@ -35,10 +35,53 @@ class TestMath(unittest.TestCase):
         self.assertEqual(self.mldsa._center(257), 0)
         self.assertEqual(self.mldsa._center(5), 5)
         self.assertEqual(self.mldsa._center(155), -102)
-        
-if __name__ == '__main__':
-    # 1. Cargamos explícitamente las pruebas de nuestra clase
-    suite = unittest.TestLoader().loadTestsFromTestCase(TestMath)
+class TestFunctional(unittest.TestCase):
     
-    # 2. Las ejecutamos manualmente con verbosity=2 para ver el detalle de cada test
-    unittest.TextTestRunner(verbosity=2).run(suite)
+    def setUp(self):
+        self.msg = b"Hello, world!"
+
+    def test_positive_verification_level_2(self):
+        """Functional test for key generation, signature generation and signature verification - Level 2"""
+        ml_dsa = MLDSA(security_level=2)
+        public_key, private_key = ml_dsa.generate_keypair()
+        
+        try:
+            signature = ml_dsa.sign(self.msg, private_key)
+            is_valid = ml_dsa.verify(self.msg, signature, public_key)
+            self.assertTrue(is_valid, "Verification failed for level 2")
+        except RuntimeError as e:
+            self.fail(f"Failed to sign at level 2 due to attempt limit: {e}")
+
+    def test_positive_verification_level_3(self):
+        """Functional test for key generation, signature generation and signature verification - Level 3"""
+        ml_dsa = MLDSA(security_level=3)
+        public_key, private_key = ml_dsa.generate_keypair()
+        
+        try:
+            signature = ml_dsa.sign(self.msg, private_key)
+            is_valid = ml_dsa.verify(self.msg, signature, public_key)
+            self.assertTrue(is_valid, "Verification failed for level 3")
+        except RuntimeError as e:
+            self.fail(f"Failed to sign at level 3 due to attempt limit: {e}")
+
+    def test_positive_verification_level_5(self):
+        """Functional test for key generation, signature generation and signature verification - Level 5"""
+        ml_dsa = MLDSA(security_level=5)
+        public_key, private_key = ml_dsa.generate_keypair()
+        
+        try:
+            signature = ml_dsa.sign(self.msg, private_key)
+            is_valid = ml_dsa.verify(self.msg, signature, public_key)
+            self.assertTrue(is_valid, "Verification failed for level 5")
+        except RuntimeError as e:
+            self.fail(f"Failed to sign at level 5 due to attempt limit: {e}")
+
+
+if __name__ == '__main__':
+    # 1. Cargamos las pruebas de nuestra clase
+    suite_math = unittest.TestLoader().loadTestsFromTestCase(TestMath)
+    unittest.TextTestRunner(verbosity=2).run(suite_math)
+
+    # Ejecutamos todas las pruebas juntas
+    suite_func = unittest.TestLoader().loadTestsFromTestCase(TestFunctional)
+    unittest.TextTestRunner(verbosity=2).run(suite_func)
