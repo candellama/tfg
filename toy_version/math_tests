@@ -1,0 +1,44 @@
+import unittest
+from toy_mldsa import MLDSA
+
+class TestMath(unittest.TestCase):
+    def setUp(self):
+        self.mldsa = MLDSA(security_level=2)
+
+    def test_poly_mul_negacyclic_identity(self):
+        """Test multiplying by 1 (neutral element)"""
+        # Polynomial a: 1 + 2x + 3x^2 (padded to n=16 with zeros)
+        a = [1, 2, 3] + [0] * 13  
+        # Polynomial b: 1 (padded to n=16)
+        b = [1] + [0] * 15        
+        
+        expected = a
+        result = self.mldsa._poly_mul_negacyclic(a, b)
+        self.assertEqual(result, expected, "Multiplying by 1 should return the same polynomial")
+
+    def test_poly_mul_negacyclic_wrap(self):
+        """Test the ring polynomial property: x^n = -1"""
+        # x^15 * x =x^16 = -1 en el ring polynomial de n=16
+        a = [0] * 15 + [1]    
+        b = [0, 1] + [0] * 14 
+
+        expected = [256] + [0] * 15 # -1 (256 mod 257)
+        result = self.mldsa._poly_mul_negacyclic(a, b)
+        self.assertEqual(result, expected, "x^15 * x should be congruent to -1 mod q")
+
+    def test_center_and_mod(self):
+        """Test that values are centered in [-q/2, q/2]"""
+        # For q=257, the range should be [-128, 128]
+        self.assertEqual(self.mldsa._center(256), -1)
+        self.assertEqual(self.mldsa._center(128), 128)
+        self.assertEqual(self.mldsa._center(129), -128)
+        self.assertEqual(self.mldsa._center(257), 0)
+        self.assertEqual(self.mldsa._center(5), 5)
+        self.assertEqual(self.mldsa._center(155), -102)
+        
+if __name__ == '__main__':
+    # 1. Cargamos explícitamente las pruebas de nuestra clase
+    suite = unittest.TestLoader().loadTestsFromTestCase(TestMath)
+    
+    # 2. Las ejecutamos manualmente con verbosity=2 para ver el detalle de cada test
+    unittest.TextTestRunner(verbosity=2).run(suite)
