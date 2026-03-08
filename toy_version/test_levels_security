@@ -36,9 +36,10 @@ if __name__ == "__main__":
         print("\n2 - Signing Message...")
         try:
             sig = ml_dsa.sign(msg, private_key)
-            c, z = sig
+            c, z, attempt = sig
             print(f"Signature c: {c}")
             print(f"Signature z[0][:8]: {z[0][:8]}...")
+            print(f"Signing succeeded after {attempt} attempts.")
             
             # 3. Verify the signature
             print("\n3 - Verifying Signature...")
