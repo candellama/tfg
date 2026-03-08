@@ -3,7 +3,7 @@ import os
 from typing import Tuple, List
 
 class MLDSA:
-    
+# 1- Initialization and parameters
     # function to initialize parameters based on security level
     def __init__(self, security_level: int = 2):
         self.security_level = security_level
@@ -30,7 +30,7 @@ class MLDSA:
         self.gamma2 = p["gamma2"]
         self.beta = p["beta"]
 
-
+# 2- Seed expansion
     # function to generate random seed for key generation
     # default seed size is 32 bytes (256 bits)
     def generate_seed(self) -> bytes:
@@ -43,6 +43,7 @@ class MLDSA:
         h.update(nonce.to_bytes(2, "little"))  # robust (0..65535)
         return h.digest(length)
     
+# 3- Sampling
 
     # function to obtain uniform matrix A k x l from seed rho
     def sample_uniform_matrix(self, rho: bytes) -> list:
@@ -68,8 +69,19 @@ class MLDSA:
             coeffs.append((b % (2 * eta + 1)) - eta)
         return coeffs
 
-    # --- Helpers for norms (used by signing) ---
- 
+    def _bytes_to_coefficients_uniform_mod_q(self, data: bytes) -> list:
+        coeffs = []
+        needed = 4 * self.n
+        if len(data) < needed:
+            raise ValueError(f"Need at least {needed} bytes, got {len(data)}")
+
+        for i in range(self.n):
+            chunk = data[4*i : 4*i + 4]
+            val = int.from_bytes(chunk, "little") % self.q
+            coeffs.append(val)
+        return coeffs
+    
+# 4- Algebraic and ring arithmetic operations 
     def _center(self, x: int) -> int:
         x %= self.q
         if x > self.q // 2:
@@ -85,20 +97,8 @@ class MLDSA:
 
     def _vec_norm_inf(self, v: List[List[int]]) -> int:
         return max(self._poly_norm_inf(p) for p in v)
-    ##############################################################################
-    def _bytes_to_coefficients_uniform_mod_q(self, data: bytes) -> list:
-        coeffs = []
-        needed = 4 * self.n
-        if len(data) < needed:
-            raise ValueError(f"Need at least {needed} bytes, got {len(data)}")
+    
 
-        for i in range(self.n):
-            chunk = data[4*i : 4*i + 4]
-            val = int.from_bytes(chunk, "little") % self.q
-            coeffs.append(val)
-        return coeffs
-
-    # functions for algebraic ops
     # function to do: poly1 + scalar*poly2 of two polys expressed as lists of their polynomials
     def _poly_scalar_add(self, poly1: List[int], scalar: int, poly2: List[int]) -> List[int]:
         if scalar == 0:
@@ -111,17 +111,15 @@ class MLDSA:
     def _poly_sub(self, a: List[int], b: List[int]) -> List[int]:
         return self._poly_scalar_add(a, -1, b)
 
-    # the same operation expanded to vectors of polys
+    # the same function expanded to vectors of polys
     # vec1+scalar*vec2
     def _vec_scalar_add(self, vec1: List[List[int]], scalar: int, vec2: List[List[int]]) -> List[List[int]]:
         return [self._poly_scalar_add(v, scalar, a) for v, a in zip(vec1, vec2)]
 
-
-
     # function to multiply two polynomials in R_q = Z_q[x]/(x^n + 1)
-    def _poly_mul_negacyclic(self, a: list, b: list) -> list:
+    def _poly_mul_negacyclic(self, a: List[int], b: List[int]) -> List[int]:
         """
-        Multiply in R_q = Z_q[x]/(x^n + 1) (negacyclic convolution).
+        Multiply in R_q = Z_q[x]/(x^n + 1)
         """
         n = self.n
         q = self.q
@@ -139,7 +137,7 @@ class MLDSA:
 
 
     
-    def _matrix_mult_add(self, A: list, s1: list, s2: list) -> list:
+    def _matrix_mult_add(self, A: List[List[List[int]]], s1: List[List[int]], s2: List[List[int]]) -> List[List[int]]:
         """
         Compute t = A*s1 + s2 over the ring R_q (polynomial arithmetic).
         A: k x l matrix of polynomials (each polinomial is length-n list mod q)
@@ -162,7 +160,7 @@ class MLDSA:
         return self._matrix_mult_add(A, v, zero_vec)
     
     
-    ########### highbits and lowbits functions
+# 5- highbits and lowbits
 
     # function to compute high and lowbits of a polynomial expressed as list of its coeffs
     def _highbits_poly(self, poly: List[int], gamma2: int) -> Tuple[List[int], List[int]]:
@@ -177,7 +175,7 @@ class MLDSA:
             lows.append(low)
         return highs, lows
 
-    # function to compute the high and lowbits of a vector of polys
+    # extended function to compute the high and lowbits of a vector of polys
     def _highbits_vec(self, vec: List[List[int]], gamma2: int) -> Tuple[List[List[int]], List[List[int]]]:
         highs, lows = [], []
         for p in vec:
@@ -189,9 +187,6 @@ class MLDSA:
     def _lowbits_vec(self, vec: List[List[int]], gamma2: int) -> List[List[int]]:
         return [self._highbits_poly(p, gamma2)[1] for p in vec]
 
-
-
-    ########################3
     # this function returns either 0 or 1 so it is in the B_tau although -1 is not used for simplicity in the toy
     def _hash_to_bit(self, message: bytes, w1: List[List[int]]) -> int:
         # Toy challenge: 1 bit from SHA-256.
@@ -203,7 +198,10 @@ class MLDSA:
                 h.update(int(v & 0xFFFF).to_bytes(2, "little")) # little endian
         return h.digest()[0] & 1  
 
-    # KEYPAIR GENERATION FUNCTION 
+#########################################################################################################
+#########################################################################################################
+# Toy version of Dilithium algorithms 
+    # 1 KEYPAIR GENERATION FUNCTION 
     def generate_keypair(self, seed: bytes = None) -> Tuple[Tuple, Tuple]:
 
         if seed is None:
@@ -245,12 +243,12 @@ class MLDSA:
     
 
     ############################################
-    # SIGNATURE GENERATION FUNCTION
-    def sign(self, message: bytes, private_key: tuple, max_tries: int = 1000) -> Tuple[int, List[List[int]]]:
+    # 2 SIGNATURE GENERATION FUNCTION
+    def sign(self, message: bytes, private_key: tuple, max_tries: int = 10000) -> Tuple[int, List[List[int]]]:
         rho, s1, s2, _t = private_key
         A = self.sample_uniform_matrix(rho)
 
-        for _ in range(max_tries):
+        for attempt in range(max_tries):
             # 1) sample y with small coefficients in [-gamma1, gamma1]
             y = [self.sample_bounded(os.urandom(32), i, self.gamma1, self.n) for i in range(self.l)]
 
@@ -282,15 +280,15 @@ class MLDSA:
             if max(max(abs(x) for x in poly) for poly in w0_prime) > (self.gamma2 - self.beta):
                 continue
 
-            return c, z
+            return c, z, attempt
 
         raise RuntimeError(f"Signing failed after {max_tries} attempts (try increasing gamma1/gamma2 or lowering beta).")
 
 
     #############################################
-    # SIGNATURE VERIFICATION FUNCTION
+    # 3 SIGNATURE VERIFICATION FUNCTION
     def verify(self, message: bytes, signature: Tuple[int, List[List[int]]], public_key: tuple) -> bool:
-        c, z = signature
+        c, z, a = signature
         rho, t = public_key
         A = self.sample_uniform_matrix(rho)
 
