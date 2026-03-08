@@ -1,0 +1,52 @@
+import hashlib
+import os
+from typing import Tuple, List
+from toy_mldsa import MLDSA
+
+if __name__ == "__main__":
+    
+    # The security levels
+    security_levels = [2, 3, 5]
+    msg = b"Hello, world!"
+    
+    # loop through the security levels
+    for level in security_levels:
+        print(f"===========================================================")
+        print(f" Test Toy ML-DSA - Security Level {level}")
+        print(f"===========================================================")
+        
+        # ML-DSA instance for the current security level
+        ml_dsa = MLDSA(security_level=level)
+        # print the paramters that change dependening on the security level
+        print(f"Parameters -> k: {ml_dsa.k}, l: {ml_dsa.l}, eta: {ml_dsa.eta}\n")
+        
+        # 1. Generate keypair
+        print("1 - Generating Keypair")
+        # public_key is a tuple: (rho, t)
+        # private_key is a tuple: (rho, s1, s2, t)
+        public_key, private_key = ml_dsa.generate_keypair()
+        
+        rho_pub, t = public_key
+        # t is a vector of k polynomials
+        print(f"Public Key rho (hex): {rho_pub.hex()}")
+        # print the first 8 coefficients of the first polynomial of t
+        print(f"Public Key t[0][:8]:  {t[0][:8]}...")
+        
+        # 2. Sign the message
+        print("\n2 - Signing Message...")
+        try:
+            sig = ml_dsa.sign(msg, private_key)
+            c, z = sig
+            print(f"Signature c: {c}")
+            print(f"Signature z[0][:8]: {z[0][:8]}...")
+            
+            # 3. Verify the signature
+            print("\n3 - Verifying Signature...")
+            is_valid = ml_dsa.verify(msg, sig, public_key)
+            print(f"Verify result: {is_valid}")
+            
+        except RuntimeError as e:
+            # Catches the rejection sampling failure (max_tries exceeded)
+            print(f"Signing failed: {e}")
+            
+        print("\n")
