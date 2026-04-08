@@ -1,5 +1,7 @@
 import unittest
 from toy_mldsa import MLDSA
+import time
+from statistics import mean
 
 class TestMath(unittest.TestCase):
     def setUp(self):
@@ -29,12 +31,34 @@ class TestMath(unittest.TestCase):
     def test_center_and_mod(self):
         """Test that values are centered in [-q/2, q/2]"""
         # For q=257, the range should be [-128, 128]
-        self.assertEqual(self.mldsa._center(256), -1)
-        self.assertEqual(self.mldsa._center(128), 128)
-        self.assertEqual(self.mldsa._center(129), -128)
-        self.assertEqual(self.mldsa._center(257), 0)
-        self.assertEqual(self.mldsa._center(5), 5)
-        self.assertEqual(self.mldsa._center(155), -102)
+        self.assertEqual(self.mldsa._centered_mod(256, self.mldsa.q), -1)
+        self.assertEqual(self.mldsa._centered_mod(128, self.mldsa.q), 128)
+        self.assertEqual(self.mldsa._centered_mod(129, self.mldsa.q), -128)
+        self.assertEqual(self.mldsa._centered_mod(257, self.mldsa.q), 0)
+        self.assertEqual(self.mldsa._centered_mod(5, self.mldsa.q), 5)
+        self.assertEqual(self.mldsa._centered_mod(155, self.mldsa.q), -102)
+
+    def test_highbits_lowbits(self):
+        """Test that the decomposition x = high*gamma2 + low holds"""
+        gamma2 = self.mldsa.gamma2 # In the toy implementation, this is 8
+        
+        # Test with positive, negative, and boundary values
+        test_values = [0, 1, 7, 8, -5, 120, -120]
+        
+        highs, lows = self.mldsa._highbits_poly(test_values, gamma2)
+        
+        for i in range(len(test_values)):
+            # In MLDSA, bit operations are performed on the centered value
+            x_centered = self.mldsa._centered_mod(test_values[i], self.mldsa.q)
+            
+            # Reconstrucción de la fórmula
+            reconstructed = highs[i] * gamma2 + lows[i]
+            
+            self.assertEqual(x_centered, reconstructed, 
+                             f"Falló para el valor {test_values[i]}: high={highs[i]}, low={lows[i]}")
+            
+
+
 class TestFunctional(unittest.TestCase):
     
     def setUp(self):
@@ -64,7 +88,7 @@ class TestFunctional(unittest.TestCase):
         except RuntimeError as e:
             self.fail(f"Failed to sign at level 3 due to attempt limit: {e}")
 
-    def test_positive_verification_level_5(self):
+    def test_positive_verification_level_5(self): 
         """Functional test for key generation, signature generation and signature verification - Level 5"""
         ml_dsa = MLDSA(security_level=5)
         public_key, private_key = ml_dsa.generate_keypair()
@@ -76,50 +100,233 @@ class TestFunctional(unittest.TestCase):
         except RuntimeError as e:
             self.fail(f"Failed to sign at level 5 due to attempt limit: {e}")
 
+####################################################################################################
 
-class TestOtherMessage(unittest.TestCase):
-    
+class TestWrongKey(unittest.TestCase):
     def setUp(self):
-        self.msg = b"Hello, world!"
+        self.msg = b""
+def create_wrong_key_test_for_level(level):
+    def test_verify_with_wrong_public_key(self):
+        """Test that a signature fails verification if checked against a different public key"""
+        ml_dsa_1 = MLDSA(security_level=level)
+        ml_dsa_2 = MLDSA(security_level=level)
+        
+        _ , sk = ml_dsa_1.generate_keypair()
+        pk_wrong, _ = ml_dsa_2.generate_keypair()
+        
+        msg = b"Message from Alice"
+        
+        try:
+            # sign the message with the correct private key
+            signature = ml_dsa_1.sign(msg, sk)
+            
+            # try to verify it using the wrong public key
+            is_valid = ml_dsa_2.verify(msg, signature, pk_wrong)
+            
+            self.assertFalse(is_valid, "Critical: Verification passed with the wrong public key")
+        except RuntimeError as e:
+            self.fail(f"Failed to sign due to attempt limit: {e}")
+    return test_verify_with_wrong_public_key
 
-    def test_diff_msg_verification_level_2(self):
+for lvl in [2, 3, 5]:
+    setattr(TestWrongKey, f"test_wrong_key_level_{lvl}", create_wrong_key_test_for_level(lvl))  
+
+##################################################################################
+# test to check that a modified signature fails
+class TestEmptyMessage(unittest.TestCase):
+    def setUp(self):
+        self.msg = b""
+def create_empty_msg_test_for_level(level):
+    def test_empty_message(self):
+        ml_dsa = MLDSA(security_level=level)
+        public_key, private_key = ml_dsa.generate_keypair()
+        
+        try:
+            signature = ml_dsa.sign(self.msg, private_key)
+            is_valid = ml_dsa.verify(self.msg, signature, public_key)
+            self.assertTrue(is_valid, "Verification failed for empty message")
+        except RuntimeError as e:
+            self.fail(f"Failed to sign empty message: {e}")
+    return test_empty_message
+
+for lvl in [2, 3, 5]:
+    setattr(TestEmptyMessage, f"test_empty_message_level_{lvl}", create_empty_msg_test_for_level(lvl))
+
+
+ #######################################################################
+# Test that a valid signature for one message does not verify for a different one
+class TestOtherSignature(unittest.TestCase):
+    def setUp(self):
+        self.msg1 = b"Hello, world!1"
+        self.msg2 = b"Hello, world!2"
+
+
+    def test_diff_sig_verification_level_2(self):
         """Functional test for key generation, signature generation and signature verification - Level 2"""
         ml_dsa = MLDSA(security_level=2)
         public_key, private_key = ml_dsa.generate_keypair()
         
         try:
-            signature = ml_dsa.sign(self.msg, private_key)
-            is_valid = ml_dsa.verify(b"Hola, mundo", signature, public_key)
+            false_signature = ml_dsa.sign(self.msg2, private_key)
+            is_valid = ml_dsa.verify(self.msg1, false_signature, public_key)
             self.assertFalse(is_valid, "Verification failed for level 2")
         except RuntimeError as e:
             self.fail(f"Failed to sign at level 2 due to attempt limit: {e}")
 
-    def test_diff_msg_verification_level_3(self):
+    def test_diff_sig_verification_level_3(self):
         """Functional test for key generation, signature generation and signature verification - Level 3"""
         ml_dsa = MLDSA(security_level=3)
         public_key, private_key = ml_dsa.generate_keypair()
         
         try:
-            signature = ml_dsa.sign(self.msg, private_key)
-            is_valid = ml_dsa.verify(b"Hola, mundo", signature, public_key)
+            false_signature = ml_dsa.sign(self.msg2, private_key)
+            is_valid = ml_dsa.verify(self.msg1, false_signature, public_key)
             self.assertFalse(is_valid, "Verification failed for level 3")
         except RuntimeError as e:
             self.fail(f"Failed to sign at level 3 due to attempt limit: {e}")
 
-    def test_diff_msg_verification_level_5(self):
+    def test_diff_sig_verification_level_5(self):
         """Functional test for key generation, signature generation and signature verification - Level 5"""
         ml_dsa = MLDSA(security_level=5)
         public_key, private_key = ml_dsa.generate_keypair()
         
         try:
-            signature = ml_dsa.sign(self.msg, private_key)
-            is_valid = ml_dsa.verify(b"Hola, mundo", signature, public_key)
+            false_signature = ml_dsa.sign(self.msg2, private_key)
+            is_valid = ml_dsa.verify(self.msg1, false_signature, public_key)
             self.assertFalse(is_valid, "Verification failed for level 5")
         except RuntimeError as e:
             self.fail(f"Failed to sign at level 5 due to attempt limit: {e}")
 
+##################################################################################
+# test to check that a modified signature fails
+class TestSignatureMalleability(unittest.TestCase):
+    def setUp(self):
+        self.msg = b"Testing signature modification"
 
-if __name__ == '__main__':
+def create_test_for_level(level):
+    def test_tampered_signature(self):
+        ml_dsa = MLDSA(security_level=level)
+        public_key, private_key = ml_dsa.generate_keypair()
+        
+        try:
+            # 1. Generate a valid signature
+            c, z, attempts = ml_dsa.sign(self.msg, private_key)
+            
+            # 2. Tamper with the signature
+            
+            # modify the first coefficient of the first polynomial of z by adding 1 modulo q
+            z[0][0] = (z[0][0] + 1) % ml_dsa.q
+            
+            tampered_signature = (c, z, attempts)
+            
+            # 3. Verify the tampered signature with the original message
+            is_valid = ml_dsa.verify(self.msg, tampered_signature, public_key)
+            
+            # 4. it must fail
+            self.assertFalse(is_valid, "Critical: Verification passed even though the signature was tampered for level {level}")
+            
+        except RuntimeError as e:
+            self.fail(f"Failed to sign at level {level} due to attempt limit: {e}")
+    return test_tampered_signature
+
+for lvl in [2, 3, 5]:
+    setattr(TestSignatureMalleability, f"test_tampered_level_{lvl}", create_test_for_level(lvl))
+
+#############################################################################
+
+class TestPerformance(unittest.TestCase):
+    def setUp(self):
+        self.msg = b"Hello, world!"
+
+    def _benchmark_level(self, level: int, repetitions: int = 1):
+        # lists to store execution times 
+        keygen_times = []
+        sign_times = []
+        verify_times = []
+        
+        # Counters for failures
+        sign_failures = 0
+        verify_failures = 0
+
+        # List to store number of attepts for successful signings
+        sign_attempts_list = []
+
+        for _ in range(repetitions):
+            ml_dsa = MLDSA(security_level=level)
+
+            # 1. Key generation 
+            t0 = time.perf_counter()
+            public_key, private_key = ml_dsa.generate_keypair()
+            t1 = time.perf_counter()
+            keygen_times.append((t1 - t0)* 1000)
+
+            # 2. Signing 
+            t0 = time.perf_counter()
+            # try except to count failures in signing without stopping the test
+            try:
+                signature = ml_dsa.sign(self.msg, private_key)
+                t1 = time.perf_counter()
+                sign_times.append((t1 - t0)* 1000)
+                
+                # append number of attempts taken for successful sign
+                attempts_taken = signature[2] + 1
+                sign_attempts_list.append(attempts_taken)
+                
+            except RuntimeError:
+                # if signing fails (>10000 attempts), count the failure and continue with next signing
+                sign_failures += 1
+                continue 
+
+            # 3. Verification 
+            t0 = time.perf_counter()
+            is_valid = ml_dsa.verify(self.msg, signature, public_key)
+            t1 = time.perf_counter()
+            verify_times.append((t1 - t0)* 1000)
+
+            # count verification failures
+            if not is_valid:
+                verify_failures += 1
+
+        return {
+            "level": level,
+            "keygen_avg": mean(keygen_times) if keygen_times else 0,
+            "sign_avg": mean(sign_times) if sign_times else 0,
+            "verify_avg": mean(verify_times) if verify_times else 0,
+            "sign_failures": sign_failures,
+            "verify_failures": verify_failures,
+            "sign_attempts_avg": mean(sign_attempts_list) if sign_attempts_list else 0,
+        }
+
+    def test_performance_by_security_level(self):
+        repetitions = 5
+        results = []
+
+        for level in [2, 3, 5]:
+            result = self._benchmark_level(level, repetitions=repetitions)
+            results.append(result)
+
+        print(f"\nAverage execution times and stats over {repetitions} runs")
+        print("-" * 105)
+        print(f"{'Level':<8}{'KeyGen (ms)':<15}{'Sign (ms)':<15}{'Verify (ms)':<15}{'Sign Fails':<15}{'Verif Fails':<15}{'Avg Attempts':<15}")
+        print("-" * 105)
+
+        for r in results:
+            print(
+                f"{r['level']:<8}"
+                f"{r['keygen_avg']:<15.3f}"
+                f"{r['sign_avg']:<15.3f}"
+                f"{r['verify_avg']:<15.3f}"
+                f"{r['sign_failures']:<15}"
+                f"{r['verify_failures']:<15}"
+                f"{r['sign_attempts_avg']:<15.2f}"
+            )
+
+
+
+
+
+
+if __name__ == '__main__': 
     # 1. Cargamos las pruebas de nuestra clase
     suite_math = unittest.TestLoader().loadTestsFromTestCase(TestMath)
     unittest.TextTestRunner(verbosity=2).run(suite_math)
@@ -127,5 +334,17 @@ if __name__ == '__main__':
     suite_func1 = unittest.TestLoader().loadTestsFromTestCase(TestFunctional)
     unittest.TextTestRunner(verbosity=2).run(suite_func1)
 
-    suite_func2 = unittest.TestLoader().loadTestsFromTestCase(TestOtherMessage)
+    suite_func2 = unittest.TestLoader().loadTestsFromTestCase(TestOtherSignature)
     unittest.TextTestRunner(verbosity=2).run(suite_func2)
+
+    suite_func3 = unittest.TestLoader().loadTestsFromTestCase(TestSignatureMalleability)
+    unittest.TextTestRunner(verbosity=2).run(suite_func3)
+
+    suite_func4 = unittest.TestLoader().loadTestsFromTestCase(TestEmptyMessage)
+    unittest.TextTestRunner(verbosity=2).run(suite_func4)
+
+    suite_func5 = unittest.TestLoader().loadTestsFromTestCase(TestWrongKey)
+    unittest.TextTestRunner(verbosity=2).run(suite_func5)
+
+    suite_func6 = unittest.TestLoader().loadTestsFromTestCase(TestPerformance)
+    unittest.TextTestRunner(verbosity=2).run(suite_func6)
