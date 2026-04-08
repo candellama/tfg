@@ -192,9 +192,7 @@ class MLDSA:
     def _sample_In_Ball(self, seed: bytes)->List[int]:
         if self.tau > self.n:
             raise ValueError("tau must be <= n")
-        if self.tau > 64:
-            raise ValueError("this implementation assumes tau <= 64")
-    
+            
         c = [0] * self.n
         # use shake 256 to sample random bytes
         h = hashlib.shake_256()
